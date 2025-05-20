@@ -1908,7 +1908,6 @@
 									if ($pos === false)  break;
 
 									$srcpath2 = substr($srcpath2, 0, $pos);
-									if (strcmp($srcpath, $srcpath2)==0) break;
 								}
 							}
 						}
