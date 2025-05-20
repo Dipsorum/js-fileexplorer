@@ -12,8 +12,39 @@
 			else if (isset($_GET[$name]))  return $_GET[$name];
 			else  return false;
 		}
+		
+		public static function GetSanitizedPath_NoBase($name, $allowdotfolders = false, $extrapath = "")
+		{
+			$path = self::GetRequestVar($name);
+			if ($path === false)  return false;
 
-		public static function GetSanitizedPath($basedir, $name, $allowdotfolders = false, $extrapath = "")
+			$path = @json_decode($path, true);
+			if (!is_array($path))  return false;
+
+			$result = array();
+
+			foreach ($path as $id)
+			{
+				if (!is_string($id) || $id === "." || $id === "..")  return false;
+
+				if ($id === "")  continue;
+
+				if ($id[0] === "." && !$allowdotfolders)  return false;
+
+				$result[] = $id;
+			}
+
+			$strpath = implode("/", $result);
+			$result = (empty($strpath))?false:@realpath($strpath);
+			if ($result === false)  return false;
+
+			$result = str_replace("\\", "/", $result);
+			if ($extrapath !== "")  $result .= "/" . $extrapath;
+
+			return $result;
+		}
+		
+		public static function GetSanitizedPath_BaseDir($basedir, $name, $allowdotfolders = false, $extrapath = "")
 		{
 			$path = self::GetRequestVar($name);
 			if ($path === false)  return false;
@@ -42,6 +73,13 @@
 
 			if ($extrapath !== "")  $result .= "/" . $extrapath;
 
+			return $result;
+		}
+
+		public static function GetSanitizedPath($basedir, $name, $allowdotfolders = false, $extrapath = "")
+		{
+			$nodir = strcmp( $basedir, "*" ) === 0;
+			$result = $nodir ? self::GetSanitizedPath_NoBase( $name, $allowdotfolders, $extrapath ) : self::GetSanitizedPath_BaseDir( $basedir, $name, $allowdotfolders, $extrapath );
 			return $result;
 		}
 
@@ -450,7 +488,7 @@
 
 		public static function BuildEntry($path, $file, $type, $depth, &$options)
 		{
-			$info = @stat($path . "/" . $file);
+			$info = empty($path)?@stat($file):@stat($path . "/" . $file);
 			if ($info === false)  return false;
 
 			$entry = array(
@@ -514,9 +552,33 @@
 		// Refresh folder.
 		protected static function ProcessRefreshAction(&$options)
 		{
-			$path = self::GetSanitizedPath($options["base_dir"], "path", $options["dot_folders"]);
-
+			$basedir = $options["base_dir"];
+			$nodir = strcmp($basedir,"*")===0;
+			$path = self::GetSanitizedPath($basedir, "path", $options["dot_folders"]);
+			
 			if (!isset($options["refresh"]) || !$options["refresh"])  $result = array("success" => false, "error" => self::FETranslate("Operation denied."), "errorcode" => "refresh_not_allowed");
+			else if ($nodir && $path===false)
+			{
+				@set_time_limit(0);
+
+				$result = array(
+					"success" => true,
+					"entries" => array()
+				);
+				
+				//
+				// Esploro i drive.
+				//
+				foreach (range('A', 'Z') as $letter)
+				{
+					$drive = $letter . ':\\';
+					if (is_dir($drive))
+					{
+						$entry = self::BuildEntry("", $letter . ":", "folder", 0, $options);
+						if ($entry !== false)  $result["entries"][] = $entry;
+					}
+				}
+			}
 			else if ($path === false)  $result = array("success" => false, "error" => self::FETranslate("Invalid path specified."), "errorcode" => "invalid_path");
 			else
 			{
@@ -1846,6 +1908,7 @@
 									if ($pos === false)  break;
 
 									$srcpath2 = substr($srcpath2, 0, $pos);
+									if (strcmp($srcpath, $srcpath2)==0) break;
 								}
 							}
 						}
@@ -1874,15 +1937,16 @@
 
 		public static function HandleActions($requestvar, $requestprefix, $basedir, $options)
 		{
+			$nodir = strcmp($basedir,"*") === 0;
 			$action = self::GetRequestVar($requestvar);
 			if ($action === false)  return false;
 
-			if (!is_dir($basedir))  return array("success" => false, "error" => self::FETranslate("Supplied base directory does not exist."), "errorcode" => "invalid_base_dir");
+			if (!$nodir&&!is_dir($basedir))  return array("success" => false, "error" => self::FETranslate("Supplied base directory does not exist."), "errorcode" => "invalid_base_dir");
 
 			// Normalize options.
 			$options["action"] = $action;
 			$options["requestprefix"] = $requestprefix;
-			$options["base_dir"] = str_replace("\\", "/", realpath($basedir));
+			$options["base_dir"] = $nodir?"*":str_replace("\\", "/", realpath($basedir));
 
 			if (isset($options["base_url"]))  $options["base_url"] = rtrim($options["base_url"], "/");
 
